@@ -55,16 +55,8 @@ function blocker {
         apt-get install -y iptables-persistent
     fi
 
-    if ! iptables -L isp-blocker -n >/dev/null 2>&1; then
-        iptables -N isp-blocker
-    fi
-
-    if ! iptables -C INPUT -j isp-blocker &> /dev/null; then
-        iptables -I INPUT 1 -j isp-blocker
-    fi
-
     clear
-    read -p "Are you sure about blocking $isp? [Y/N] : " confirm
+    read -p "آیا مطمئن هستید که می‌خواهید فقط به $isp اجازه اتصال دهید؟ [Y/N] : " confirm
     
     if [[ $confirm == [Yy]* ]]; then
         clear
@@ -84,117 +76,65 @@ function blocker {
         esac
 
         if [ $? -ne 0 ]; then
-            echo "Failed to fetch the IP list. Please contact @Kiya6955"
-            read -p "Press enter to return to Menu" dummy
+            echo "دریافت لیست IP با شکست مواجه شد. لطفاً با @Kiya6955 تماس بگیرید"
+            read -p "برای بازگشت به منو، Enter را فشار دهید" dummy
             blocking_menu
         fi
         
         clear
-        echo "Choose an option:"
-        echo "1-Block specific ports for $isp"
-        echo "2-Block all ports for $isp"
-        echo "3-Back to Main Menu"
-        read -p "Enter your choice: " choice
-
-        clear
-        if [[ $choice == 1 ]]; then
-            read -p "Enter the ports you want block for $isp (enter single like 443 or separated by comma like 443,8443): " ports
-            IFS=',' read -r -a portArray <<< "$ports"
+        read -p "آیا می‌خواهید قوانین قبلی را حذف کنید؟ [Y/N] : " confirm
+        if [[ $confirm == [Yy]* ]]; then
+            iptables -F
+            iptables -X
+            iptables -Z
+            echo "قوانین قبلی با موفقیت حذف شدند"
+            sleep 2s
         fi
 
-        case $choice in
-            1)
-                clear
-                echo "Choose Protocol that you want to block for $isp"
-                echo "1-TCP & UDP"
-                echo "2-TCP"
-                echo "3-UDP"
-                read -p "Enter your choice: " protocol
+        clear
+        read -p "پورت SSH را که می‌خواهید باز بماند وارد کنید (پیش‌فرض 22): " SSH_PORT
+        SSH_PORT=${SSH_PORT:-22}
 
-                case $protocol in
-                1) protocol="all" ;;
-                2) protocol="tcp" ;;
-                3) protocol="udp" ;;
-                *) echo "Invalid option"; blocker ;;
-                esac
-                
-                clear
-                read -p "Do you want to delete the previous rules? [Y/N] : " confirm
-                if [[ $confirm == [Yy]* ]]; then
-                    iptables -F isp-blocker
-                    echo "Previous rules deleted successfully"
-                    sleep 2s
-                fi
+        # قانون پیش‌فرض برای مسدود کردن همه اتصالات ورودی
+        iptables -P INPUT DROP
+        
+        # اجازه دادن به اتصالات موجود و localhost
+        iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+        iptables -A INPUT -i lo -j ACCEPT
 
-                clear
-                echo "Blocking [$ports] for $isp started please Wait..."
+        # اجازه دادن به پورت SSH
+        iptables -A INPUT -p tcp --dport $SSH_PORT -j ACCEPT
 
-                for port in "${portArray[@]}"
-                do
-                    for IP in $IP_LIST; do
-                        if [ "$protocol" == "all" ]; then
-                            iptables -A isp-blocker -s $IP -p tcp --match multiport --dport $port -j DROP
-                            iptables -A isp-blocker -s $IP -p udp --match multiport --dport $port -j DROP
-                        else
-                            iptables -A isp-blocker -s $IP -p $protocol --match multiport --dport $port -j DROP
-                        fi
-                    done
-                done
+        echo "اعمال قوانین برای اجازه دادن به $isp شروع شد، لطفاً صبر کنید..."
+        for IP in $IP_LIST; do
+            iptables -A INPUT -s $IP -j ACCEPT
+        done
+        
+        iptables-save > /etc/iptables/rules.v4
 
-                iptables-save > /etc/iptables/rules.v4
-
-                clear
-                if [ "$protocol" == "all" ]; then
-                    echo "TCP & UDP [$ports] successfully blocked for $isp."
-                else
-                    echo "$protocol [$ports] successfully blocked for $isp."
-                fi
-                ;;
-            2)
-                clear
-                read -p "Do you want to delete the previous rules? [Y/N] : " confirm
-                if [[ $confirm == [Yy]* ]]; then
-                    iptables -F isp-blocker
-                    echo "Previous rules deleted successfully"
-                    sleep 2s
-                fi
-
-                clear
-                read -p "Enter the SSH port you want to open (default is 22): " SSH_PORT
-                SSH_PORT=${SSH_PORT:-22}
-
-                iptables -A isp-blocker -p tcp --dport $SSH_PORT -j ACCEPT
-
-                clear
-                echo "Blocking all ports for $isp started please Wait..."
-                for IP in $IP_LIST; do
-                    iptables -A isp-blocker -s $IP -j DROP
-                done
-                
-                iptables-save > /etc/iptables/rules.v4
-
-                clear
-                echo "$isp successfully blocked for all ports."
-                echo "Port $SSH_PORT has been opened for SSH."
-                ;;
-            *) echo "Invalid option"; blocking_menu ;;
-        esac
-        read -p "Press enter to return to Menu" dummy
+        clear
+        echo "فقط به $isp اجازه اتصال داده شد."
+        echo "پورت $SSH_PORT برای SSH باز مانده است."
+        
+        read -p "برای بازگشت به منو، Enter را فشار دهید" dummy
         blocking_menu
     else
-        echo "Cancelled."
-        read -p "Press enter to return to Menu" dummy
+        echo "لغو شد."
+        read -p "برای بازگشت به منو، Enter را فشار دهید" dummy
         blocking_menu
     fi
 }
 
 function unblocker {
     clear
-    iptables -F isp-blocker
+    iptables -F
+    iptables -X
+    iptables -Z
+    iptables -P INPUT ACCEPT
     iptables-save > /etc/iptables/rules.v4
     clear
-    echo "All ISPs UnBlocked successfully!"
-    read -p "Press enter to return to Menu" dummy
+    echo "همه محدودیت‌ها برداشته شد و اتصال از همه IP‌ها مجاز است!"
+    read -p "برای بازگشت به منو، Enter را فشار دهید" dummy
     blocking_menu
 }
 
